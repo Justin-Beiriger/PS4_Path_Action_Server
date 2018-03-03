@@ -64,6 +64,7 @@ public:
     void do_halt();
     void do_move(double distance);
     void do_spin(double spin_ang);
+    void get_yaw_and_dist(geometry_msgs::Pose current_pose, geometry_msgs::Pose goal_pose, double &dist, double &heading);
     
 };
 
@@ -90,13 +91,13 @@ MyPathActionServer::MyPathActionServer() :
 }
 
 //signum function: strip off and return the sign of the argument
-double sgn(double x) { if (x>0.0) {return 1.0; }
+double MyPathActionServer::sgn(double x) { if (x>0.0) {return 1.0; }
     else if (x<0.0) {return -1.0;}
     else {return 0.0;}
 }
 
 //a function to consider periodicity and find min delta angle
-double min_spin(double spin_angle) {
+double MyPathActionServer::min_spin(double spin_angle) {
         if (spin_angle>M_PI) {
             spin_angle -= 2.0*M_PI;}
         if (spin_angle< -M_PI) {
@@ -105,7 +106,7 @@ double min_spin(double spin_angle) {
 }            
 
 // a useful conversion function: from quaternion to yaw
-double convertPlanarQuat2Phi(geometry_msgs::Quaternion quaternion) {
+double MyPathActionServer::convertPlanarQuat2Phi(geometry_msgs::Quaternion quaternion) {
     double quat_z = quaternion.z;
     double quat_w = quaternion.w;
     double phi = 2.0 * atan2(quat_z, quat_w); // cheap conversion from quaternion to heading for planar motion
@@ -123,7 +124,7 @@ geometry_msgs::Quaternion convertPlanarPhi2Quaternion(double phi) {
 }
 
 // a few action functions:
-void do_halt() {
+void MyPathActionServer::do_halt() {
     ros::Rate loop_timer(1/g_sample_dt);   
     g_twist_cmd.angular.z= 0.0;
     g_twist_cmd.linear.x=0.0;
@@ -134,7 +135,7 @@ void do_halt() {
 }
 
 //a function to reorient by a specified angle (in radians), then halt
-void do_spin(double spin_ang) {
+void MyPathActionServer::do_spin(double spin_ang) {
     ros::Rate loop_timer(1/g_sample_dt);
     double timer=0.0;
     double final_time = fabs(spin_ang)/g_spin_speed;
@@ -148,7 +149,7 @@ void do_spin(double spin_ang) {
 }
 
 //a function to move forward by a specified distance (in meters), then halt
-void do_move(double distance) { // always assumes robot is already oriented properly
+void MyPathActionServer::do_move(double distance) { // always assumes robot is already oriented properly
                                 // but allow for negative distance to mean move backwards
     ros::Rate loop_timer(1/g_sample_dt);
     double timer=0.0;
@@ -165,7 +166,7 @@ void do_move(double distance) { // always assumes robot is already oriented prop
 
 //THIS FUNCTION IS NOT FILLED IN: NEED TO COMPUTE HEADING AND TRAVEL DISTANCE TO MOVE
 //FROM START TO GOAL
-void get_yaw_and_dist(geometry_msgs::Pose current_pose, geometry_msgs::Pose goal_pose,double &dist, double &heading) {
+void MyPathActionServer::get_yaw_and_dist(geometry_msgs::Pose current_pose, geometry_msgs::Pose goal_pose,double &dist, double &heading) {
  
     // store the initial and final (x,y) positions
     double x_start, y_start, x_goal, y_goal;
@@ -236,7 +237,7 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
         pose_desired = goal->path.poses[i].pose; //get next pose from vector of poses
         
         // get desired heading and distance based on given poses 
-        get_yaw_and_dist(g_current_pose, pose_desired,travel_distance, yaw_desired);
+        MyPathActionServer::get_yaw_and_dist(g_current_pose, pose_desired,travel_distance, yaw_desired);
         ROS_INFO("pose %d: desired yaw = %f; desired (x,y) = (%f,%f)",i,yaw_desired,
            pose_desired.position.x,pose_desired.position.y); 
         ROS_INFO("current (x,y) = (%f, %f)",g_current_pose.position.x,g_current_pose.position.y);
@@ -248,15 +249,15 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
         ROS_INFO("pose %d: desired yaw = %f",i,yaw_desired);   
         yaw_current = MyPathActionServer::convertPlanarQuat2Phi(g_current_pose.orientation); //our current yaw--should use a sensor
         spin_angle = yaw_desired - yaw_current; // spin this much
-        spin_angle = min_spin(spin_angle);// but what if this angle is > pi?  then go the other way
-        do_spin(spin_angle); // carry out this incremental action
+        spin_angle = MyPathActionServer::min_spin(spin_angle);// but what if this angle is > pi?  then go the other way
+        MyPathActionServer::do_spin(spin_angle); // carry out this incremental action
         yaw_current = yaw_current + spin_angle;
         // move forward according to calculated distance
-        do_move(travel_distance);
+        MyPathActionServer::do_move(travel_distance);
         
         // spin to match the prescribed heading
         spin_angle = convertPlanarQuat2Phi(pose_desired.orientation) - yaw_current;
-        do_spin(spin_angle);
+        MyPathActionServer::do_spin(spin_angle);
         
         // update current pose to remember where we are
         g_current_pose = pose_desired;  
@@ -268,32 +269,6 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
     // if we survive to here, then the goal was successfully accomplished; inform the client
     result_.output = npts;
     as_.setSucceeded(result_);
-    
-    /*
-    countdown_val_ = goal->input;
-    //implement a simple timer, which counts down from provided countdown_val to 0, in seconds
-    while (countdown_val_>0) {
-       ROS_INFO("countdown = %d",countdown_val_);
-       
-       // each iteration, check if cancellation has been ordered
-       if (as_.isPreemptRequested()){	
-          ROS_WARN("goal cancelled!");
-          result_.output = countdown_val_;
-          as_.setAborted(result_); // tell the client we have given up on this goal; send the result message as well
-          return; // done with callback
- 		}
- 	
- 	   //if here, then goal is still valid; provide some feedback
- 	   feedback_.fdbk = countdown_val_; // populate feedback message with current countdown value
- 	   as_.publishFeedback(feedback_); // send feedback to the action client that requested this goal
-       countdown_val_--; //decrement the timer countdown
-       timer.sleep(); //wait 1 sec between loop iterations of this timer
-    }
-    //if we survive to here, then the goal was successfully accomplished; inform the client
-    result_.output = countdown_val_; //value should be zero, if completed countdown
-    as_.setSucceeded(result_); // return the "result" message to client, along with "success" status
-    */
-    
     
 }
 
