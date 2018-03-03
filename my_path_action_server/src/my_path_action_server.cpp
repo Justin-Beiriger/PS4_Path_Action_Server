@@ -11,6 +11,7 @@
 #include <my_path_action_server/path_messageAction.h>
 #include <example_ros_service/PathSrv.h>
 #include <nav_msgs/Path.h>
+#include <std_msgs/Bool.h> // boolean message
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/Twist.h>
 #include <iostream>
@@ -24,10 +25,13 @@ const double g_move_speed = 1.0; // set forward speed to this value, e.g. 1m/s
 const double g_spin_speed = 1.0; // set yaw rate to this value, e.g. 1 rad/s
 const double g_sample_dt = 0.01;
 const double g_dist_tol = 0.01; // 1cm
-//global variables, including a publisher object
+//global variables, including publisher and subscriber objects
 geometry_msgs::Twist g_twist_cmd;
 ros::Publisher g_twist_commander; //global publisher object
 geometry_msgs::Pose g_current_pose; // not really true--should get this from odom 
+bool g_lidar_alarm = false;  // global var for lidar alarm
+int g_start = 0; // global var to keep track of how many poses have been completed
+bool retry_pose = false;
 
 class MyPathActionServer {
 private:
@@ -64,8 +68,8 @@ public:
     void do_halt();
     void do_move(double distance);
     void do_spin(double spin_ang);
+    void respond_to_alarm();
     void get_yaw_and_dist(geometry_msgs::Pose current_pose, geometry_msgs::Pose goal_pose, double &dist, double &heading);
-    
 };
 
 //implementation of the constructor:
@@ -114,7 +118,7 @@ double MyPathActionServer::convertPlanarQuat2Phi(geometry_msgs::Quaternion quate
 }
 
 //and the other direction:
-geometry_msgs::Quaternion convertPlanarPhi2Quaternion(double phi) {
+geometry_msgs::Quaternion MyPathActionServer::convertPlanarPhi2Quaternion(double phi) {
     geometry_msgs::Quaternion quaternion;
     quaternion.x = 0.0;
     quaternion.y = 0.0;
@@ -149,6 +153,7 @@ void MyPathActionServer::do_spin(double spin_ang) {
 }
 
 //a function to move forward by a specified distance (in meters), then halt
+// this function will be interrupted by a lidar alarm
 void MyPathActionServer::do_move(double distance) { // always assumes robot is already oriented properly
                                 // but allow for negative distance to mean move backwards
     ros::Rate loop_timer(1/g_sample_dt);
@@ -156,16 +161,39 @@ void MyPathActionServer::do_move(double distance) { // always assumes robot is a
     double final_time = fabs(distance)/g_move_speed;
     g_twist_cmd.angular.z = 0.0; //stop spinning
     g_twist_cmd.linear.x = sgn(distance)*g_move_speed;
-    while(timer<final_time) {
+    while(timer<final_time && !g_lidar_alarm) {
           g_twist_commander.publish(g_twist_cmd);
           timer+=g_sample_dt;
           loop_timer.sleep(); 
-          }  
-    do_halt();
+    }  
+    do_halt(); // halt after movement is complete
+    if (g_lidar_alarm) {
+		ROS_INFO("Responding to alarm");
+		respond_to_alarm();
+	}
 }
 
-//THIS FUNCTION IS NOT FILLED IN: NEED TO COMPUTE HEADING AND TRAVEL DISTANCE TO MOVE
-//FROM START TO GOAL
+// a function to move the robot when the alarm goes off
+void MyPathActionServer::respond_to_alarm()
+{
+	double spin_angle = 1.571; // rad
+	double forward_dist = 0.25; // m
+	// spin ~60 degrees
+	do_spin(spin_angle);
+	double yaw_current = MyPathActionServer::convertPlanarQuat2Phi(g_current_pose.orientation);
+	yaw_current = yaw_current + spin_angle;
+	g_current_pose.orientation = MyPathActionServer::convertPlanarPhi2Quaternion(yaw_current);
+	// move 0.25 m forward
+	do_move(forward_dist);
+	// update the current position of the robot using odometry
+	double x_dist = forward_dist * cos(yaw_current);
+	double y_dist = forward_dist * sin(yaw_current);
+	g_current_pose.position.x += x_dist;
+	g_current_pose.position.y += y_dist;
+	retry_pose = true;
+}
+
+// calculate yaw and distance to move from start to goal
 void MyPathActionServer::get_yaw_and_dist(geometry_msgs::Pose current_pose, geometry_msgs::Pose goal_pose,double &dist, double &heading) {
  
     // store the initial and final (x,y) positions
@@ -190,6 +218,14 @@ void MyPathActionServer::get_yaw_and_dist(geometry_msgs::Pose current_pose, geom
         heading = atan2(dy,dx);
 }
 
+void alarmCallBack(const std_msgs::Bool& alarm_msg)
+{
+	g_lidar_alarm = alarm_msg.data; // make the alarm status global
+	if (g_lidar_alarm) {
+		ROS_INFO("LIDAR alarm received!");
+	}
+}
+
 void do_inits(ros::NodeHandle &n) {
   //initialize components of the twist command global variable
     g_twist_cmd.linear.x=0.0;
@@ -211,7 +247,9 @@ void do_inits(ros::NodeHandle &n) {
     g_current_pose.orientation.w = 1.0;
     
     // we declared g_twist_commander as global, but never set it up; do that now that we have a node handle
-    g_twist_commander = n.advertise<geometry_msgs::Twist>("/robot0/cmd_vel", 1);    
+    g_twist_commander = n.advertise<geometry_msgs::Twist>("/robot0/cmd_vel", 1);   
+    // declare the subscriber to listen for the lidar alarm 
+    ros::Subscriber alarm_subscriber = n.subscribe("lidar_alarm", 1, alarmCallBack);  
 }
 
 //executeCB implementation: this is a member method that will get registered with the action server
@@ -232,7 +270,7 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
     int npts = goal->path.poses.size();
     ROS_INFO("received path request with %d poses",npts);
     
-    for (int i=0;i<npts;i++) { //visit each subgoal
+    for (int i=g_start;i<npts;i++) { //visit each subgoal
         // odd notation: drill down, access vector element, drill some more to get pose
         pose_desired = goal->path.poses[i].pose; //get next pose from vector of poses
         
@@ -258,9 +296,14 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
         // spin to match the prescribed heading
         spin_angle = convertPlanarQuat2Phi(pose_desired.orientation) - yaw_current;
         MyPathActionServer::do_spin(spin_angle);
-        
-        // update current pose to remember where we are
-        g_current_pose = pose_desired;  
+		
+		
+        if (retry_pose) {
+			i--;
+		} else {
+			// update current pose to remember where we are
+			g_current_pose = pose_desired;  
+		}
         
         feedback_.path_progress = i;
         as_.publishFeedback(feedback_);
