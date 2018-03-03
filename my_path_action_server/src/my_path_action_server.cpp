@@ -79,7 +79,7 @@ public:
 // The final argument,  "false", says don't start the server yet.  (We'll do this in the constructor)
 
 MyPathActionServer::MyPathActionServer() :
-   as_(nh_, "timer_action", boost::bind(&MyPathActionServer::executeCB, this, _1),false) 
+   as_(nh_, "path_sequence", boost::bind(&MyPathActionServer::executeCB, this, _1),false) 
 // in the above initialization, we name the server "example_action"
 //  clients will need to refer to this name to connect with this server
 {
@@ -189,6 +189,30 @@ void get_yaw_and_dist(geometry_msgs::Pose current_pose, geometry_msgs::Pose goal
         heading = atan2(dy,dx);
 }
 
+void do_inits(ros::NodeHandle &n) {
+  //initialize components of the twist command global variable
+    g_twist_cmd.linear.x=0.0;
+    g_twist_cmd.linear.y=0.0;    
+    g_twist_cmd.linear.z=0.0;
+    g_twist_cmd.angular.x=0.0;
+    g_twist_cmd.angular.y=0.0;
+    g_twist_cmd.angular.z=0.0;  
+    
+    //define initial position to be 0
+    g_current_pose.position.x = 0.0;
+    g_current_pose.position.y = 0.0;
+    g_current_pose.position.z = 0.0;
+    
+    // define initial heading to be "0"
+    g_current_pose.orientation.x = 0.0;
+    g_current_pose.orientation.y = 0.0;
+    g_current_pose.orientation.z = 0.0;
+    g_current_pose.orientation.w = 1.0;
+    
+    // we declared g_twist_commander as global, but never set it up; do that now that we have a node handle
+    g_twist_commander = n.advertise<geometry_msgs::Twist>("/robot0/cmd_vel", 1);    
+}
+
 //executeCB implementation: this is a member method that will get registered with the action server
 // argument type is very long.  Meaning:
 // actionlib is the package for action servers
@@ -199,9 +223,53 @@ void get_yaw_and_dist(geometry_msgs::Pose current_pose, geometry_msgs::Pose goal
 // e.g.,  "demoAction" is auto-generated from (our) base name "demo" and generic name "Action"
 void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_action_server::path_messageAction>::GoalConstPtr& goal) {
     ROS_INFO("in executeCB");
-    ROS_INFO("goal input is: %d", goal->input);
     //do work here: this is where your interesting code goes
     ros::Rate timer(1.0); // 1Hz timer
+    
+    double yaw_desired, yaw_current, travel_distance, spin_angle;
+    geometry_msgs::Pose pose_desired;
+    int npts = goal->path.poses.size();
+    ROS_INFO("received path request with %d poses",npts);
+    
+    for (int i=0;i<npts;i++) { //visit each subgoal
+        // odd notation: drill down, access vector element, drill some more to get pose
+        pose_desired = goal->path.poses[i].pose; //get next pose from vector of poses
+        
+        // get desired heading and distance based on given poses 
+        get_yaw_and_dist(g_current_pose, pose_desired,travel_distance, yaw_desired);
+        ROS_INFO("pose %d: desired yaw = %f; desired (x,y) = (%f,%f)",i,yaw_desired,
+           pose_desired.position.x,pose_desired.position.y); 
+        ROS_INFO("current (x,y) = (%f, %f)",g_current_pose.position.x,g_current_pose.position.y);
+        ROS_INFO("travel distance = %f",travel_distance);         
+        
+        // a quaternion is overkill for navigation in a plane; really only need a heading angle
+        // this yaw is measured CCW from x-axis
+        
+        ROS_INFO("pose %d: desired yaw = %f",i,yaw_desired);   
+        yaw_current = MyPathActionServer::convertPlanarQuat2Phi(g_current_pose.orientation); //our current yaw--should use a sensor
+        spin_angle = yaw_desired - yaw_current; // spin this much
+        spin_angle = min_spin(spin_angle);// but what if this angle is > pi?  then go the other way
+        do_spin(spin_angle); // carry out this incremental action
+        yaw_current = yaw_current + spin_angle;
+        // move forward according to calculated distance
+        do_move(travel_distance);
+        
+        // spin to match the prescribed heading
+        spin_angle = convertPlanarQuat2Phi(pose_desired.orientation) - yaw_current;
+        do_spin(spin_angle);
+        
+        // update current pose to remember where we are
+        g_current_pose = pose_desired;  
+        
+        feedback_.path_progress = i;
+        as_.publishFeedback(feedback_);
+    }
+    
+    // if we survive to here, then the goal was successfully accomplished; inform the client
+    result_.output = npts;
+    as_.setSucceeded(result_);
+    
+    /*
     countdown_val_ = goal->input;
     //implement a simple timer, which counts down from provided countdown_val to 0, in seconds
     while (countdown_val_>0) {
@@ -224,18 +292,24 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
     //if we survive to here, then the goal was successfully accomplished; inform the client
     result_.output = countdown_val_; //value should be zero, if completed countdown
     as_.setSucceeded(result_); // return the "result" message to client, along with "success" status
+    */
+    
+    
 }
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "timer_action_server_node"); // name this node 
-
-    ROS_INFO("instantiating the timer_action_server: ");
+    
+    ros::init(argc, argv, "path_action_server_node"); // name this node 
+    ros::NodeHandle n;
+    do_inits(n); //pass in a node handle so this function can set up publisher with it
+    ROS_INFO("instantiating the path_action_server: ");
 
     MyPathActionServer as_object; // create an instance of the class "ExampleActionServer"
     
     ROS_INFO("going into spin");
     // from here, all the work is done in the action server, with the interesting stuff done within "executeCB()"
     // you will see 5 new topics under example_action: cancel, feedback, goal, result, status
+    ROS_INFO("Ready to accept paths.");
     ros::spin();
 
     return 0;

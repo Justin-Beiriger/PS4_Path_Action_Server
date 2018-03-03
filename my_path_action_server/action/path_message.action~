@@ -1,9 +1,13 @@
 #goal
-int32 input
+<<<<<<< HEAD
+nav_msgs/Path input
+=======
+nav_msgs/Path path
+>>>>>>> b410cac1f1269bf175d7e99b29c11343b8701611
 ---
 #result
-int32 goal_stamp
 int32 output
+int32 goal_stamp
 ---
 #feedback
-int32 fdbk
+int32 path_progress

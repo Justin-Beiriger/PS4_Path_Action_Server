@@ -41,8 +41,8 @@ void doneCb(const actionlib::SimpleClientGoalState& state,
 //this function wakes up every time the action server has feedback updates for this client
 // only the client that sent the current goal will get feedback info from the action server
 void feedbackCb(const my_path_action_server::path_messageFeedbackConstPtr& fdbk_msg) {
-    ROS_INFO("feedback status = %d",fdbk_msg->fdbk);
-    g_fdbk = fdbk_msg->fdbk; //make status available to "main()"
+    ROS_INFO("feedback status = %d",fdbk_msg->path_progress);
+    g_fdbk = fdbk_msg->path_progress; //make status available to "main()"
 }
 
 // Called once when the goal becomes active; not necessary, but could be useful diagnostic
@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
         
         // use the name of our server, which is: timer_action (named in example_action_server_w_fdbk.cpp)
         // the "true" argument says that we want our new client to run as a separate thread (a good idea)
-        actionlib::SimpleActionClient<my_path_action_server::path_messageAction> action_client("timer_action", true);
+        actionlib::SimpleActionClient<my_path_action_server::path_messageAction> action_client("path_sequence", true);
         
         // attempt to connect to the server: need to put a test here, since client might launch before server
         ROS_INFO("attempting to connect to server: ");
@@ -74,33 +74,52 @@ int main(int argc, char** argv) {
         }
         ROS_INFO("connected to action server");  // if here, then we connected to the server;
         
-        int countdown_goal = 1; //user will specify a timer value
-        while(countdown_goal>=0 && ros::ok()) {
-           cout<<"enter a desired timer value, in seconds (0 to abort, <0 to quit): ";
-           cin>>countdown_goal;
-           if (countdown_goal==0) { //see if user wants to cancel current goal
-             ROS_INFO("cancelling goal");
-             action_client.cancelGoal(); //this is how one can cancel a goal in process
-           }
-           if (countdown_goal<0) { //option for user to shut down this client
-              ROS_INFO("this client is quitting");
-              return 0;
-           }
-           //if here, then we want to send a new timer goal to the action server
-           ROS_INFO("sending timer goal= %d seconds to timer action server",countdown_goal);
-           goal.input = countdown_goal; //populate a goal message
-           //here are some options:
-           //action_client.sendGoal(goal); // simple example--send goal, but do not specify callbacks
-           //action_client.sendGoal(goal,&doneCb); // send goal and specify a callback function
-           //or, send goal and specify callbacks for "done", "active" and "feedback"
-           action_client.sendGoal(goal, &doneCb, &activeCb, &feedbackCb); 
-           
-           //this example will loop back to the the prompt for user input.  The main function will be
-           // suspended while waiting on user input, but the callbacks will still be alive
-           //if user enters a new goal value before the prior request is completed, the prior goal will
-           // be aborted and the new goal will be installed
+        //create some path points...this should be done by some intelligent algorithm, but we'll hard-code it here
+        geometry_msgs::PoseStamped pose_stamped;
+        geometry_msgs::Pose pose;
+        pose.position.x = 3.0; // first desired x-coord is 3
+        pose.position.y = 0.0;
+        pose.position.z = 0.0; // let's hope so!
+        geometry_msgs::Quaternion quat;
+        quat = convertPlanarPhi2Quaternion(1.571);
+        pose_stamped.pose.orientation = quat;
+        pose_stamped.pose = pose;
+        goal.path.poses.push_back(pose_stamped);
+
+        // some more poses...
+        quat = convertPlanarPhi2Quaternion(0); // get a quaternion corresponding to this heading
+        pose_stamped.pose.orientation = quat;
+        pose_stamped.pose.position.y = 3.0; // desired y-coord is 3.0
+        goal.path.poses.push_back(pose_stamped);
+
+        quat = convertPlanarPhi2Quaternion(1.571);
+        pose_stamped.pose.orientation = quat;
+        pose_stamped.pose.position.x = 6.5; // desired x-coord is 6.5
+        goal.path.poses.push_back(pose_stamped);
+
+        quat = convertPlanarPhi2Quaternion(3.14159);
+        pose_stamped.pose.orientation = quat;
+        pose_stamped.pose.position.y = 5.2; // desired x-coord is 6.5
+        goal.path.poses.push_back(pose_stamped);
+
+        quat = convertPlanarPhi2Quaternion(1.571);
+        pose_stamped.pose.orientation = quat;
+        pose_stamped.pose.position.x = 3.0; // desired x-coord is 6.5
+        goal.path.poses.push_back(pose_stamped);
+
+        quat = convertPlanarPhi2Quaternion(3.14159);
+        pose_stamped.pose.orientation = quat;
+        pose_stamped.pose.position.y = 12.0; // desired x-coord is 6.5
+        goal.path.poses.push_back(pose_stamped);
+
+        quat = convertPlanarPhi2Quaternion(3.14159);
+        pose_stamped.pose.orientation = quat;
+        pose_stamped.pose.position.x = 0; // desired x-coord is 6.5
+        goal.path.poses.push_back(pose_stamped);
         
-       }
+        action_client.sendGoal(goal, &doneCb, &activeCb, &feedbackCb);
+        
+        
     return 0;
 }
 
