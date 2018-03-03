@@ -16,11 +16,9 @@
 #include <iostream>
 #include <string>
 #include <math.h>
-//the following #include refers to the "action" message defined for this package
-// The action message can be found in: .../example_action_server/action/demo.action
-// Automated header generation creates multiple headers for message I/O
-// These are referred to by the root name (demo) and appended name (Action)
+
 using namespace std;
+
 //some tunable constants, global
 const double g_move_speed = 1.0; // set forward speed to this value, e.g. 1m/s
 const double g_spin_speed = 1.0; // set yaw rate to this value, e.g. 1 rad/s
@@ -42,9 +40,9 @@ private:
     actionlib::SimpleActionServer<my_path_action_server::path_messageAction> as_;
     
     // here are some message types to communicate with our client(s)
-    my_path_action_server::path_messageAction goal_; // goal message, received from client
-    //my_path_action_server::path_messageAction result_; // put results here, to be sent back to the client when done w/ goal
-    my_path_action_server::path_messageAction feedback_; // for feedback 
+    my_path_action_server::path_messageGoal goal_; // goal message, received from client
+    my_path_action_server::path_messageResult result_; // put results here, to be sent back to the client when done w/ goal
+    my_path_action_server::path_messageFeedback feedback_; // for feedback 
     //  use: as_.publishFeedback(feedback_); to send incremental feedback to the client
     int countdown_val_;
 
@@ -212,8 +210,8 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
        // each iteration, check if cancellation has been ordered
        if (as_.isPreemptRequested()){	
           ROS_WARN("goal cancelled!");
-          //result_.output = countdown_val_;
-          //as_.setAborted(result_); // tell the client we have given up on this goal; send the result message as well
+          result_.output = countdown_val_;
+          as_.setAborted(result_); // tell the client we have given up on this goal; send the result message as well
           return; // done with callback
  		}
  	
@@ -225,7 +223,7 @@ void MyPathActionServer::executeCB(const actionlib::SimpleActionServer<my_path_a
     }
     //if we survive to here, then the goal was successfully accomplished; inform the client
     result_.output = countdown_val_; //value should be zero, if completed countdown
-    //as_.setSucceeded(result_); // return the "result" message to client, along with "success" status
+    as_.setSucceeded(result_); // return the "result" message to client, along with "success" status
 }
 
 int main(int argc, char** argv) {
