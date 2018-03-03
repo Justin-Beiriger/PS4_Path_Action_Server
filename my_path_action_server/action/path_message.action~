@@ -1,8 +1,9 @@
 #goal
-int32 input
+nav_msgs/Path path
 ---
 #result
 int32 goal_stamp
+int32 output
 ---
 #feedback
-int32 fdbk
+int32 path_progress
