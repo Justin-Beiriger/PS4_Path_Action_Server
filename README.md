@@ -2,4 +2,4 @@
 
 Justin Beiriger, jwb153
 
-The implementation details of the path service and client are found within the ---------------- package.
+The implementation details of the path service and client are found within the my_path_action_server package.
