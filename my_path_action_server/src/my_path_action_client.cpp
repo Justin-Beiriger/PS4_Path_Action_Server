@@ -9,6 +9,7 @@
 #include <example_ros_service/PathSrv.h> // this message type is defined in the current package
 #include <iostream>
 #include <string>
+#include <std_msgs/Bool.h> // boolean message
 #include <nav_msgs/Path.h>
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/PoseStamped.h>
@@ -18,6 +19,7 @@ using namespace std;
 bool g_goal_active = false; //some global vars for communication with callbacks
 int g_result_output = -1;
 int g_fdbk = -1;
+bool g_lidar_alarm = false;
 
 geometry_msgs::Quaternion convertPlanarPhi2Quaternion(double phi) {
     geometry_msgs::Quaternion quaternion;
@@ -27,6 +29,15 @@ geometry_msgs::Quaternion convertPlanarPhi2Quaternion(double phi) {
     quaternion.w = cos(phi / 2.0);
     return quaternion;
 }
+
+void alarmCallBack(const std_msgs::Bool& alarm_msg)
+{
+	g_lidar_alarm = alarm_msg.data; // make the alarm status global
+	if (g_lidar_alarm) {
+		ROS_INFO("LIDAR alarm received!");
+	}
+}
+
 
 // This function will be called once when the goal completes
 // this is optional, but it is a convenient way to get access to the "result" message sent by the server
@@ -55,6 +66,10 @@ void activeCb()
 int main(int argc, char** argv) {
         ros::init(argc, argv, "timer_client_node"); // name this node 
         ros::NodeHandle n;
+        
+        // declare the subscriber to listen for the lidar alarm 
+        ros::Subscriber alarm_subscriber = n.subscribe("lidar_alarm", 1, alarmCallBack); 
+        
         ros::Rate main_timer(1.0);
         // here is a "goal" object compatible with the server, as defined in example_action_server/action
         my_path_action_server::path_messageGoal goal; 
